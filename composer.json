@@ -26,7 +26,8 @@
     },
     "require-dev": {
         "orchestra/testbench": "^8.0 || ^9.0",
-        "pestphp/pest": "^2.0"
+        "pestphp/pest": "^2.0",
+        "phpunit/phpunit": "^10.5"
     },
     "autoload": {
         "psr-4": {
@@ -54,7 +55,7 @@
     "scripts": {
         "test": "pest"
     },
-    "minimum-stability": "stable",
+    "minimum-stability": "dev",
     "prefer-stable": true,
     "config": {
         "allow-plugins": {
