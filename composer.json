@@ -1,0 +1,66 @@
+{
+    "name": "bhhaskin/laravel-billing",
+    "description": "Stripe billing and subscription management for Laravel applications.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Bryan Haskin",
+            "email": "bhhaskin@bitsofsimplicity.com"
+        }
+    ],
+    "keywords": [
+        "laravel",
+        "billing",
+        "stripe",
+        "subscriptions",
+        "payments"
+    ],
+    "require": {
+        "php": "^8.1",
+        "illuminate/auth": "^10.0 || ^11.0",
+        "illuminate/database": "^10.0 || ^11.0",
+        "illuminate/support": "^10.0 || ^11.0",
+        "illuminate/console": "^10.0 || ^11.0",
+        "stripe/stripe-php": "^13.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0 || ^9.0",
+        "pestphp/pest": "^2.0",
+        "phpunit/phpunit": "^10.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Bhhaskin\\Billing\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Bhhaskin\\Billing\\Tests\\": "tests/",
+            "Bhhaskin\\Billing\\Tests\\Database\\Factories\\": "tests/database/factories/",
+            "Bhhaskin\\Billing\\Database\\Factories\\": "database/factories/",
+            "Bhhaskin\\Billing\\Database\\Seeders\\": "database/seeders/"
+        }
+    },
+    "suggest": {
+        "bhhaskin/laravel-workspaces": "Enable workspace-based billing support"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Bhhaskin\\Billing\\BillingServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "pest"
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "version": "0.1.0"
+}
