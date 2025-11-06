@@ -4,17 +4,26 @@ Stripe-based subscription and billing management for Laravel applications.
 
 ## Features
 
-- 🎯 **Multiple Plans & Add-ons** - Support for base plans and both standalone and plan-dependent add-ons
-- 💳 **Stripe Integration** - Full Stripe integration with webhook support
-- 🔄 **Proration** - Configurable proration for plan changes and cancellations
-- 🎁 **Trial Periods** - Optional trial periods per plan
-- ⏰ **Grace Periods** - Configurable grace periods for failed payments
-- 📊 **Usage-Based Billing** - Track and bill for metered usage
-- 📈 **Quota Tracking** - Track usage against limits with automatic warnings and exceeded events
-- 🏢 **Workspace Support** - Optional multi-tenancy with bhhaskin/laravel-workspaces
-- 📝 **Audit Trail** - Optional audit logging with bhhaskin/laravel-audit
-- 🧪 **Fully Tested** - Comprehensive test suite with Pest
-- 🔐 **UUIDs** - All models include UUIDs for secure API endpoints
+### Subscription Management
+- **Multiple Plans & Add-ons** - Support for base plans and both standalone and plan-dependent add-ons
+- **Stripe Integration** - Full Stripe integration with webhook support
+- **Proration** - Configurable proration for plan changes and cancellations
+- **Plan Changes** - Immediate and scheduled plan changes with upgrade/downgrade detection
+- **Trial Periods** - Optional trial periods per plan
+- **Grace Periods** - Configurable grace periods for failed payments
+- **Discount Codes** - Percentage and fixed discounts with flexible durations
+
+### Financial Operations
+- **Refund System** - Full and partial refunds with automatic credit creation
+- **Customer Credits** - Complete credit/debit tracking with running balances and expiration support
+- **Usage-Based Billing** - Track and bill for metered usage
+- **Quota Tracking** - Track usage against limits with automatic warnings and exceeded events
+
+### Developer Experience
+- **Workspace Support** - Optional multi-tenancy with bhhaskin/laravel-workspaces
+- **Audit Trail** - Optional audit logging with bhhaskin/laravel-audit
+- **Fully Tested** - Comprehensive test suite with 90+ tests
+- **UUIDs** - All models include UUIDs for secure API endpoints
 
 ## Installation
 
@@ -102,6 +111,90 @@ $websiteLimit = $user->getLimit('websites');
 // Check if user has specific feature
 if ($user->hasFeature('ssl_certificate')) {
     // ...
+}
+```
+
+### Plan Changes
+
+Change subscription plans immediately or schedule for later:
+
+```php
+$subscription = $user->subscriptions()->first();
+$newPlan = Plan::where('slug', 'enterprise')->first();
+
+// Immediate plan change with proration
+$subscription->changePlan($newPlan, [
+    'prorate' => true,
+]);
+
+// Schedule plan change for end of period
+$subscription->changePlan($newPlan, [
+    'schedule' => true,
+    'schedule_for' => $subscription->current_period_end,
+]);
+
+// Preview plan change costs before applying
+$preview = $subscription->previewPlanChange($newPlan);
+// Returns: amount, proration_credit, upgrade_charge, is_upgrade, etc.
+
+// Cancel scheduled plan change
+$subscription->cancelScheduledPlanChange();
+```
+
+### Customer Credits
+
+Manage customer credit balances for refunds, promotions, and adjustments:
+
+```php
+// Add credit to customer balance
+$user->customer->addCredit(
+    amount: 25.00,
+    type: 'promotional',
+    description: 'Holiday promotion credit',
+    options: ['expires_at' => now()->addMonths(3)]
+);
+
+// Get available credit balance
+$balance = $user->customer->getAvailableCredit();
+
+// Credits are automatically applied to invoices
+// Or manually apply credits to an invoice
+$amountApplied = $user->customer->applyCreditsToInvoice($invoice);
+
+// View credit history
+$credits = $user->customer->credits()
+    ->where('type', 'refund')
+    ->get();
+```
+
+### Refunds
+
+Create full or partial refunds for paid invoices:
+
+```php
+$invoice = $user->invoices()->where('status', 'paid')->first();
+
+// Full refund
+$refund = $invoice->refund();
+
+// Partial refund
+$refund = $invoice->refund(
+    amount: 10.00,
+    reason: 'requested_by_customer',
+    description: 'Partial service credit'
+);
+
+// Check refund status
+if ($refund->isSucceeded()) {
+    // Refund completed - customer credit created
+}
+
+// Get refund information
+$totalRefunded = $invoice->getTotalRefunded();
+$remainingRefundable = $invoice->getRemainingRefundable();
+
+if ($invoice->isFullyRefunded()) {
+    // Invoice completely refunded
 }
 ```
 
