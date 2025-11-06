@@ -45,6 +45,7 @@ class Invoice extends Model
         'invoice_number',
         'status',
         'subtotal',
+        'discount',
         'tax',
         'total',
         'currency',
@@ -57,6 +58,7 @@ class Invoice extends Model
 
     protected $casts = [
         'subtotal' => 'decimal:2',
+        'discount' => 'decimal:2',
         'tax' => 'decimal:2',
         'total' => 'decimal:2',
         'due_date' => 'datetime',
@@ -68,6 +70,7 @@ class Invoice extends Model
     protected $attributes = [
         'status' => self::STATUS_DRAFT,
         'subtotal' => 0,
+        'discount' => 0,
         'tax' => 0,
         'total' => 0,
     ];
@@ -107,6 +110,11 @@ class Invoice extends Model
     public function items(): HasMany
     {
         return $this->hasMany(InvoiceItem::class);
+    }
+
+    public function refunds(): HasMany
+    {
+        return $this->hasMany(Refund::class);
     }
 
     public function scopeDraft(Builder $query): Builder
@@ -158,8 +166,15 @@ class Invoice extends Model
 
     public function calculateTotals(): void
     {
-        $this->subtotal = $this->items()->sum('amount');
-        $this->total = $this->subtotal + $this->tax;
+        // Calculate subtotal from non-discount items
+        $this->subtotal = $this->items()->where('is_discount', false)->sum('amount');
+
+        // Calculate total discount from discount items (should be negative amounts)
+        $this->discount = abs($this->items()->where('is_discount', true)->sum('amount'));
+
+        // Calculate total: subtotal - discount + tax
+        $this->total = max(0, $this->subtotal - $this->discount + $this->tax);
+
         $this->save();
     }
 
@@ -195,5 +210,126 @@ class Invoice extends Model
         $nextNumber = max($lastNumber + 1, $startingNumber);
 
         return $prefix . $nextNumber;
+    }
+
+    /**
+     * Add discount line items for a subscription's active discounts
+     */
+    public function addDiscountItems(Subscription $subscription): void
+    {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($subscription) {
+            $activeDiscounts = $subscription->getActiveDiscounts();
+            $currency = $this->currency;
+
+            // Calculate the base amount to apply discounts to (subtotal before discounts)
+            $baseAmount = $this->items()->where('is_discount', false)
+                ->where('subscription_id', $subscription->id)
+                ->sum('amount');
+
+            if ($baseAmount <= 0 || $activeDiscounts->isEmpty()) {
+                return;
+            }
+
+            $remainingAmount = $baseAmount;
+
+            foreach ($activeDiscounts as $discount) {
+                if ($remainingAmount <= 0) {
+                    break;
+                }
+
+                $discountAmount = $discount->calculateDiscount($remainingAmount, $currency);
+
+                if ($discountAmount > 0) {
+                    // Add discount as a negative line item
+                    $this->items()->create([
+                        'subscription_id' => $subscription->id,
+                        'discount_id' => $discount->id,
+                        'description' => $discount->name . ' (' . $this->formatDiscountValue($discount) . ')',
+                        'quantity' => 1,
+                        'unit_price' => -$discountAmount,
+                        'amount' => -$discountAmount,
+                        'is_discount' => true,
+                        'period_start' => $subscription->current_period_start,
+                        'period_end' => $subscription->current_period_end,
+                    ]);
+
+                    $remainingAmount -= $discountAmount;
+                }
+            }
+        });
+    }
+
+    /**
+     * Format discount value for display
+     */
+    protected function formatDiscountValue(Discount $discount): string
+    {
+        if ($discount->type === 'percentage') {
+            return $discount->value . '% off';
+        }
+
+        return strtoupper($discount->currency) . ' ' . number_format($discount->value, 2) . ' off';
+    }
+
+    /**
+     * Create a refund for this invoice
+     */
+    public function refund(
+        ?float $amount = null,
+        string $reason = Refund::REASON_REQUESTED_BY_CUSTOMER,
+        ?string $description = null
+    ): Refund {
+        // Default to full refund
+        $refundAmount = $amount ?? $this->total;
+
+        // Check if refund amount is valid
+        $totalRefunded = $this->refunds()->succeeded()->sum('amount');
+        $remainingRefundable = $this->total - $totalRefunded;
+
+        if ($refundAmount > $remainingRefundable) {
+            throw new \InvalidArgumentException(
+                "Refund amount ({$refundAmount}) exceeds remaining refundable amount ({$remainingRefundable})"
+            );
+        }
+
+        return $this->customer->createRefund(
+            $refundAmount,
+            $this,
+            $reason,
+            $description ?? "Refund for invoice {$this->invoice_number}"
+        );
+    }
+
+    /**
+     * Get total amount refunded for this invoice
+     */
+    public function getTotalRefunded(): float
+    {
+        return (float) $this->refunds()->succeeded()->sum('amount');
+    }
+
+    /**
+     * Get remaining refundable amount
+     */
+    public function getRemainingRefundable(): float
+    {
+        return max(0, $this->total - $this->getTotalRefunded());
+    }
+
+    /**
+     * Check if invoice has been fully refunded
+     */
+    public function isFullyRefunded(): bool
+    {
+        return $this->getTotalRefunded() >= $this->total;
+    }
+
+    /**
+     * Check if invoice has been partially refunded
+     */
+    public function isPartiallyRefunded(): bool
+    {
+        $refunded = $this->getTotalRefunded();
+        return $refunded > 0 && $refunded < $this->total;
     }
 }

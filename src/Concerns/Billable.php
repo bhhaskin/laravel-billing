@@ -5,6 +5,7 @@ namespace Bhhaskin\Billing\Concerns;
 use Bhhaskin\Billing\Events\QuotaExceeded;
 use Bhhaskin\Billing\Events\QuotaWarning;
 use Bhhaskin\Billing\Models\Customer;
+use Bhhaskin\Billing\Models\Discount;
 use Bhhaskin\Billing\Models\Invoice;
 use Bhhaskin\Billing\Models\Plan;
 use Bhhaskin\Billing\Models\QuotaUsage;
@@ -36,10 +37,17 @@ trait Billable
             return $customer;
         }
 
+        // Whitelist allowed attributes to prevent mass assignment vulnerabilities
+        $allowedAttributes = \Illuminate\Support\Arr::only($attributes, [
+            'workspace_id',
+            'stripe_id',
+            'metadata',
+        ]);
+
         return $this->customer()->create(array_merge([
             'email' => $this->email ?? null,
             'name' => $this->name ?? null,
-        ], $attributes));
+        ], $allowedAttributes));
     }
 
     /**
@@ -118,18 +126,20 @@ trait Billable
      */
     public function subscribe(Plan $plan, array $options = []): Subscription
     {
-        $customer = $this->getOrCreateCustomer();
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($plan, $options) {
+            $customer = $this->getOrCreateCustomer();
 
-        $subscription = $customer->subscriptions()->create([
-            'status' => $options['status'] ?? Subscription::STATUS_ACTIVE,
-            'trial_ends_at' => $options['trial_ends_at'] ?? null,
-            'current_period_start' => $options['current_period_start'] ?? now(),
-            'current_period_end' => $options['current_period_end'] ?? now()->addMonth(),
-        ]);
+            $subscription = $customer->subscriptions()->create([
+                'status' => $options['status'] ?? Subscription::STATUS_ACTIVE,
+                'trial_ends_at' => $options['trial_ends_at'] ?? null,
+                'current_period_start' => $options['current_period_start'] ?? now(),
+                'current_period_end' => $options['current_period_end'] ?? now()->addMonth(),
+            ]);
 
-        $subscription->addItem($plan, $options['quantity'] ?? 1);
+            $subscription->addItem($plan, $options['quantity'] ?? 1);
 
-        return $subscription;
+            return $subscription;
+        });
     }
 
     /**
@@ -195,6 +205,54 @@ trait Billable
             ->unique()
             ->values()
             ->toArray();
+    }
+
+    /**
+     * Apply a discount code to a subscription.
+     */
+    public function applyDiscountCode(string $code, ?Subscription $subscription = null): void
+    {
+        $discount = Discount::byCode($code)->active()->firstOrFail();
+
+        // If no subscription specified, apply to the first active subscription
+        if (! $subscription) {
+            $subscription = $this->activeSubscriptions()->first();
+
+            if (! $subscription) {
+                throw new \InvalidArgumentException('No active subscription found');
+            }
+        }
+
+        $subscription->applyDiscount($discount);
+    }
+
+    /**
+     * Apply an admin discount to a subscription by discount ID.
+     */
+    public function applyAdminDiscount(Discount $discount, ?Subscription $subscription = null): void
+    {
+        // If no subscription specified, apply to the first active subscription
+        if (! $subscription) {
+            $subscription = $this->activeSubscriptions()->first();
+
+            if (! $subscription) {
+                throw new \InvalidArgumentException('No active subscription found');
+            }
+        }
+
+        $subscription->applyDiscount($discount);
+    }
+
+    /**
+     * Get all active discounts across all subscriptions.
+     */
+    public function getAllActiveDiscounts()
+    {
+        return $this->activeSubscriptions()
+            ->with('appliedDiscounts.discount')
+            ->get()
+            ->flatMap(fn($subscription) => $subscription->getActiveDiscounts())
+            ->unique('id');
     }
 
     /**

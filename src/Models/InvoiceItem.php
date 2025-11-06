@@ -33,11 +33,13 @@ class InvoiceItem extends Model
         'invoice_id',
         'subscription_id',
         'plan_id',
+        'discount_id',
         'description',
         'quantity',
         'unit_price',
         'amount',
         'is_proration',
+        'is_discount',
         'period_start',
         'period_end',
         'metadata',
@@ -48,6 +50,7 @@ class InvoiceItem extends Model
         'unit_price' => 'decimal:2',
         'amount' => 'decimal:2',
         'is_proration' => 'boolean',
+        'is_discount' => 'boolean',
         'period_start' => 'datetime',
         'period_end' => 'datetime',
         'metadata' => 'array',
@@ -56,6 +59,7 @@ class InvoiceItem extends Model
     protected $attributes = [
         'quantity' => 1,
         'is_proration' => false,
+        'is_discount' => false,
     ];
 
     public function getTable(): string
@@ -105,5 +109,10 @@ class InvoiceItem extends Model
     public function plan(): BelongsTo
     {
         return $this->belongsTo(Plan::class);
+    }
+
+    public function discount(): BelongsTo
+    {
+        return $this->belongsTo(Discount::class);
     }
 }
