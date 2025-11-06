@@ -21,6 +21,13 @@ use Illuminate\Support\Facades\Route;
 |     require __DIR__.'/../vendor/bhhaskin/laravel-billing/routes/api.php';
 | });
 |
+| IMPORTANT: Add the webhook route to your VerifyCsrfToken middleware's
+| $except array to exclude it from CSRF verification:
+|
+| protected $except = [
+|     'billing/webhook/stripe',
+| ];
+|
 */
 
 // Public routes with rate limiting
@@ -68,5 +75,8 @@ Route::prefix('billing')->middleware(['auth:sanctum'])->group(function () {
     });
 });
 
-// Webhook routes (no authentication)
-Route::post('/billing/webhook/stripe', [WebhookController::class, 'handle'])->name('billing.webhook.stripe');
+// Webhook routes (no authentication, signature verified in controller)
+// Must be excluded from CSRF verification in consumer app's VerifyCsrfToken middleware
+Route::post('/billing/webhook/stripe', [WebhookController::class, 'handle'])
+    ->middleware('throttle:100,1')
+    ->name('billing.webhook.stripe');

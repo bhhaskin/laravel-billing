@@ -37,9 +37,9 @@ class BillingServiceProvider extends ServiceProvider
         $this->configurePublishing();
         $this->configureMigrations();
         $this->configureCommands();
+        $this->configurePolicies();
         $this->configureStripe();
         $this->configureScheduler();
-        $this->configurePolicies();
     }
 
     /**
@@ -85,11 +85,45 @@ class BillingServiceProvider extends ServiceProvider
     }
 
     /**
+     * Configure authorization policies.
+     */
+    protected function configurePolicies(): void
+    {
+        Gate::policy(Refund::class, RefundPolicy::class);
+        Gate::policy(CustomerCredit::class, CreditPolicy::class);
+        Gate::policy(Subscription::class, SubscriptionPolicy::class);
+        Gate::policy(Invoice::class, InvoicePolicy::class);
+    }
+
+    /**
      * Configure Stripe.
      */
     protected function configureStripe(): void
     {
-        if ($secret = config('billing.stripe.secret')) {
+        $secret = config('billing.stripe.secret');
+        $key = config('billing.stripe.key');
+        $webhookSecret = config('billing.stripe.webhook_secret');
+
+        // Validate API keys if provided
+        if ($secret && ! str_starts_with($secret, 'sk_')) {
+            throw new \InvalidArgumentException(
+                'Invalid Stripe secret key. Must start with "sk_".'
+            );
+        }
+
+        if ($key && ! str_starts_with($key, 'pk_')) {
+            throw new \InvalidArgumentException(
+                'Invalid Stripe publishable key. Must start with "pk_".'
+            );
+        }
+
+        if ($webhookSecret && ! str_starts_with($webhookSecret, 'whsec_')) {
+            throw new \InvalidArgumentException(
+                'Invalid Stripe webhook secret. Must start with "whsec_".'
+            );
+        }
+
+        if ($secret) {
             Stripe::setApiKey($secret);
 
             if ($version = config('billing.stripe.api_version')) {
@@ -110,16 +144,5 @@ class BillingServiceProvider extends ServiceProvider
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule) {
             $schedule->command('billing:process')->daily();
         });
-    }
-
-    /**
-     * Configure authorization policies for billing models.
-     */
-    protected function configurePolicies(): void
-    {
-        Gate::policy(Refund::class, RefundPolicy::class);
-        Gate::policy(CustomerCredit::class, CreditPolicy::class);
-        Gate::policy(Subscription::class, SubscriptionPolicy::class);
-        Gate::policy(Invoice::class, InvoicePolicy::class);
     }
 }

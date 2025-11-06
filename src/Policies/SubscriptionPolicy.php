@@ -21,7 +21,7 @@ class SubscriptionPolicy
      */
     public function view(Authenticatable $user, Subscription $subscription): bool
     {
-        return $user->customer && $user->customer->id === $subscription->customer_id;
+        return $this->userOwnsSubscription($user, $subscription);
     }
 
     /**
@@ -37,7 +37,7 @@ class SubscriptionPolicy
      */
     public function update(Authenticatable $user, Subscription $subscription): bool
     {
-        return $user->customer && $user->customer->id === $subscription->customer_id;
+        return $this->userOwnsSubscription($user, $subscription);
     }
 
     /**
@@ -46,9 +46,16 @@ class SubscriptionPolicy
     public function cancel(Authenticatable $user, Subscription $subscription): bool
     {
         // Can only cancel active or trialing subscriptions
-        return $user->customer
-            && $user->customer->id === $subscription->customer_id
+        return $this->userOwnsSubscription($user, $subscription)
             && ($subscription->isActive() || $subscription->isTrialing());
+    }
+
+    /**
+     * Determine if the user can delete/cancel the subscription.
+     */
+    public function delete(Authenticatable $user, Subscription $subscription): bool
+    {
+        return $this->userOwnsSubscription($user, $subscription);
     }
 
     /**
@@ -56,11 +63,7 @@ class SubscriptionPolicy
      */
     public function resume(Authenticatable $user, Subscription $subscription): bool
     {
-        // Can only resume canceled subscriptions that haven't ended
-        return $user->customer
-            && $user->customer->id === $subscription->customer_id
-            && $subscription->isCanceled()
-            && ! $subscription->hasEnded();
+        return $this->userOwnsSubscription($user, $subscription);
     }
 
     /**
@@ -72,8 +75,7 @@ class SubscriptionPolicy
         // 1. They own the subscription
         // 2. Subscription is active or trialing
         // 3. New plan is different from current plan
-        return $user->customer
-            && $user->customer->id === $subscription->customer_id
+        return $this->userOwnsSubscription($user, $subscription)
             && ($subscription->isActive() || $subscription->isTrialing())
             && $subscription->getCurrentPlan()?->id !== $newPlan->id;
     }
@@ -83,8 +85,7 @@ class SubscriptionPolicy
      */
     public function previewPlanChange(Authenticatable $user, Subscription $subscription): bool
     {
-        return $user->customer
-            && $user->customer->id === $subscription->customer_id
+        return $this->userOwnsSubscription($user, $subscription)
             && ($subscription->isActive() || $subscription->isTrialing());
     }
 
@@ -93,8 +94,7 @@ class SubscriptionPolicy
      */
     public function cancelScheduledPlanChange(Authenticatable $user, Subscription $subscription): bool
     {
-        return $user->customer
-            && $user->customer->id === $subscription->customer_id
+        return $this->userOwnsSubscription($user, $subscription)
             && $subscription->hasScheduledPlanChange();
     }
 
@@ -103,8 +103,7 @@ class SubscriptionPolicy
      */
     public function applyDiscount(Authenticatable $user, Subscription $subscription): bool
     {
-        return $user->customer
-            && $user->customer->id === $subscription->customer_id
+        return $this->userOwnsSubscription($user, $subscription)
             && ($subscription->isActive() || $subscription->isTrialing());
     }
 
@@ -113,17 +112,24 @@ class SubscriptionPolicy
      */
     public function removeDiscount(Authenticatable $user, Subscription $subscription): bool
     {
-        return $user->customer
-            && $user->customer->id === $subscription->customer_id
+        return $this->userOwnsSubscription($user, $subscription)
             && ($subscription->isActive() || $subscription->isTrialing());
     }
 
     /**
-     * Determine if the user can delete the subscription.
+     * Check if the user owns the subscription through their customer record.
      */
-    public function delete(Authenticatable $user, Subscription $subscription): bool
+    protected function userOwnsSubscription(Authenticatable $user, Subscription $subscription): bool
     {
-        // Alias for cancel
-        return $this->cancel($user, $subscription);
+        // Get the user's customer
+        $customer = $subscription->customer;
+
+        if (!$customer) {
+            return false;
+        }
+
+        // Check if the customer's billable model matches the authenticated user
+        return $customer->billable_type === get_class($user)
+            && $customer->billable_id === $user->getAuthIdentifier();
     }
 }

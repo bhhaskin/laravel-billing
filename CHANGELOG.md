@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2025-11-06
+## [0.3.0] - 2025-11-06
 
 ### Added
 
@@ -45,8 +45,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Idempotency Checks**: Prevents duplicate refund requests within 5-minute window
 - **API Resources**: Secure response transformers excluding internal IDs, Stripe IDs, and metadata (9 resource classes)
 - **Database Transactions**: All financial operations wrapped in transactions for ACID compliance
-- **Mass Assignment Protection**: Whitelisted options arrays in `addCredit()`, `createRefund()`, `getOrCreateCustomer()`
+- **Mass Assignment Protection**: Whitelisted options arrays in `addCredit()`, `createRefund()`, `getOrCreateCustomer()` plus `$guarded` properties on all models
 - **Rate Limiting**: Tiered limits (60/30/10 req/min) based on operation sensitivity
+- **Model Security**: Added `$hidden` properties to all models to prevent sensitive data exposure (Stripe IDs, payment details)
+- **Stripe Validation**: Added Stripe API key validation on service provider boot
+- **Invoice Number Safety**: Fixed invoice number race condition with database locking
+- **Webhook Security**: Enhanced webhook security with comprehensive error logging and monitoring
+- **Input Validation**: Added input validation for subscription cancellation endpoint
+
+### Changed
+- Updated SubscriptionController to use explicit authorization checks
+- Updated InvoiceController to use explicit authorization checks
+- Updated RefundController to use policies, Form Requests, and API Resources
+- PlanController now only exposes active plans via public API
+- WebhookController now includes detailed security logging for all events and failures
+- Routes file now includes CSRF exclusion documentation for webhooks
 
 ### Updated
 - `CLAUDE.md` documentation with all new features, usage examples, and API endpoints
@@ -70,10 +83,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multi-plan and add-on support
 - Discount system with codes and admin-applied discounts
 - Trial periods and grace periods
-- Workspace-based billing support
+- Workspace-based billing support (optional)
 - Proration support
 - Invoice generation and management
 - Payment method management
 - Usage-based billing support
-- Comprehensive test suite
+- Webhook handling for Stripe events
+- Daily billing processing command
+- Comprehensive test suite with Pest
 - API endpoints for plans, subscriptions, invoices, and discounts
