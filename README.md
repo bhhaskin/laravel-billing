@@ -6,14 +6,16 @@ Stripe-based subscription and billing management for Laravel applications.
 
 ### Subscription Management
 - **Multiple Plans & Add-ons** - Support for base plans and both standalone and plan-dependent add-ons
-- **Stripe Integration** - Full Stripe integration with webhook support
+- **Stripe Integration** - Full Stripe integration with idempotent webhook handling
 - **Proration** - Configurable proration for plan changes and cancellations
 - **Plan Changes** - Immediate and scheduled plan changes with upgrade/downgrade detection
 - **Trial Periods** - Optional trial periods per plan
 - **Grace Periods** - Configurable grace periods for failed payments
 - **Discount Codes** - Percentage and fixed discounts with flexible durations
+- **Payment Method Expiry** - Configurable warning window with `PaymentMethodExpiring` event and scheduled command
 
 ### Financial Operations
+- **Integer-Cents Money** - All amounts stored and computed as integer minor units (no float precision bugs)
 - **Refund System** - Full and partial refunds with automatic credit creation
 - **Customer Credits** - Complete credit/debit tracking with running balances and expiration support
 - **Usage-Based Billing** - Track and bill for metered usage
@@ -22,7 +24,7 @@ Stripe-based subscription and billing management for Laravel applications.
 ### Developer Experience
 - **Workspace Support** - Optional multi-tenancy with bhhaskin/laravel-workspaces
 - **Audit Trail** - Optional audit logging with bhhaskin/laravel-audit
-- **Fully Tested** - Comprehensive test suite with 90+ tests
+- **Fully Tested** - Comprehensive test suite with 100+ tests
 - **UUIDs** - All models include UUIDs for secure API endpoints
 
 ## Installation
@@ -54,6 +56,25 @@ STRIPE_SECRET=your_stripe_secret
 STRIPE_WEBHOOK_SECRET=your_webhook_secret
 ```
 
+## Money Handling
+
+All monetary values are stored and exchanged as **integer minor units** (cents for USD, pence for GBP, etc.) — never as floats or decimals. This eliminates precision bugs and aligns with Stripe's API conventions.
+
+```php
+// $19.99 in cents
+$plan = Plan::create(['name' => 'Pro', 'price' => 1999, ...]);
+
+// $50.00 refund
+$invoice->refund(amount: 5000);
+
+// $25.00 promotional credit
+$user->customer->addCredit(amount: 2500, type: 'promotional');
+```
+
+For display, divide by 100 or use `Number::currency($plan->price / 100, 'USD')`.
+
+If you are upgrading from `< 0.4.0`, the `migrate` command converts existing decimal data automatically. See the [CHANGELOG](CHANGELOG.md) for the full upgrade guide.
+
 ## Usage
 
 ### Add Billable Trait to User Model
@@ -75,7 +96,7 @@ use Bhhaskin\Billing\Models\Plan;
 $plan = Plan::create([
     'name' => 'Professional',
     'slug' => 'professional',
-    'price' => 19.99,
+    'price' => 1999, // $19.99 in cents
     'interval' => 'monthly',
     'features' => ['feature1', 'feature2'],
     'limits' => ['websites' => 5, 'storage_gb' => 100],
@@ -146,15 +167,15 @@ $subscription->cancelScheduledPlanChange();
 Manage customer credit balances for refunds, promotions, and adjustments:
 
 ```php
-// Add credit to customer balance
+// Add credit to customer balance ($25.00 = 2500 cents)
 $user->customer->addCredit(
-    amount: 25.00,
+    amount: 2500,
     type: 'promotional',
     description: 'Holiday promotion credit',
     options: ['expires_at' => now()->addMonths(3)]
 );
 
-// Get available credit balance
+// Get available credit balance (in cents)
 $balance = $user->customer->getAvailableCredit();
 
 // Credits are automatically applied to invoices
@@ -174,12 +195,12 @@ Create full or partial refunds for paid invoices:
 ```php
 $invoice = $user->invoices()->where('status', 'paid')->first();
 
-// Full refund
+// Full refund (defaults to remaining refundable amount)
 $refund = $invoice->refund();
 
-// Partial refund
+// Partial refund ($10.00 = 1000 cents)
 $refund = $invoice->refund(
-    amount: 10.00,
+    amount: 1000,
     reason: 'requested_by_customer',
     description: 'Partial service credit'
 );
@@ -272,6 +293,83 @@ Include the API routes in your `routes/api.php`:
 Route::middleware('auth:sanctum')->group(function () {
     require __DIR__.'/../vendor/bhhaskin/laravel-billing/routes/api.php';
 });
+```
+
+### Stripe Webhooks
+
+Wire the webhook endpoint to your application's routes file. Exclude it from CSRF verification:
+
+```php
+// routes/api.php (or web.php)
+use Bhhaskin\Billing\Http\Controllers\WebhookController;
+
+Route::post('/billing/webhook/stripe', [WebhookController::class, 'handle'])
+    ->name('billing.webhook.stripe');
+
+// app/Http/Middleware/VerifyCsrfToken.php (Laravel 10) or
+// bootstrap/app.php (Laravel 11+)
+protected $except = [
+    'billing/webhook/stripe',
+];
+```
+
+In your application's `StripeWebhookController` (if you need custom handling), extend the package controller and override only the handler methods you need:
+
+```php
+use Bhhaskin\Billing\Http\Controllers\WebhookController as BaseWebhookController;
+
+class StripeWebhookController extends BaseWebhookController
+{
+    protected function handleInvoicePaymentSucceeded($stripeInvoice): void
+    {
+        parent::handleInvoicePaymentSucceeded($stripeInvoice);
+        // Application-specific side effects here
+    }
+}
+```
+
+#### Webhook Idempotency
+
+Every event delivered to the webhook endpoint is recorded in `billing_webhook_events` keyed by Stripe's `event.id`. Duplicate deliveries (Stripe retries, multi-endpoint setups, manual replays) are returned `200` immediately without re-running handlers. Each handler runs inside a database transaction; failures leave `processed_at` null so a subsequent re-delivery will retry.
+
+Configure retention in `config/billing.php` (default 90 days), and prune old records:
+
+```bash
+php artisan billing:prune-webhook-events
+```
+
+The package also auto-schedules this weekly when `auto_register_scheduler` is enabled.
+
+### Payment Method Expiry Warnings
+
+The `billing:check-expiring-payment-methods` command iterates active card payment methods and dispatches a `PaymentMethodExpiring` event for any card within the configured warning window (default 60 days, set via `billing.payment_method_expiry.warning_days`).
+
+```bash
+php artisan billing:check-expiring-payment-methods
+php artisan billing:check-expiring-payment-methods --days=30 --dry-run
+php artisan billing:check-expiring-payment-methods --force
+```
+
+Each card fires the event exactly once per (card, expiry-month) combination — debounced via metadata so daily scheduling does not flood your notifications.
+
+Listen for the event in your application:
+
+```php
+use Bhhaskin\Billing\Events\PaymentMethodExpiring;
+
+protected $listen = [
+    PaymentMethodExpiring::class => [
+        SendCardExpiringNotification::class,
+    ],
+];
+
+// Listener:
+public function handle(PaymentMethodExpiring $event): void
+{
+    $event->paymentMethod->customer->billable->notify(
+        new CardExpiringSoon($event->paymentMethod, $event->daysUntilExpiry)
+    );
+}
 ```
 
 ### Daily Billing Processing

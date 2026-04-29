@@ -142,6 +142,39 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Webhook Handling
+    |--------------------------------------------------------------------------
+    |
+    | Stripe webhook handling configuration. Idempotency is enforced by
+    | recording each event's stripe_event_id in the webhook_events table;
+    | duplicate deliveries are dropped without re-running handlers.
+    |
+    */
+
+    'webhook' => [
+        // Number of days to retain processed webhook event records before
+        // billing:prune-webhook-events deletes them. Set to null to disable pruning.
+        'retention_days' => env('BILLING_WEBHOOK_RETENTION_DAYS', 90),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Payment Method Expiry Warnings
+    |--------------------------------------------------------------------------
+    |
+    | When a card payment method is within this many days of expiry, the
+    | billing:check-expiring-payment-methods command will dispatch a
+    | PaymentMethodExpiring event. The event fires once per (card, expiry-month)
+    | combination; tracking is stored on the payment method's metadata.
+    |
+    */
+
+    'payment_method_expiry' => [
+        'warning_days' => env('BILLING_PAYMENT_METHOD_EXPIRY_WARNING_DAYS', 60),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Database Table Names
     |--------------------------------------------------------------------------
     |
@@ -159,5 +192,6 @@ return [
         'payment_methods' => 'billing_payment_methods',
         'usage_records' => 'billing_usage_records',
         'quota_usage' => 'billing_quota_usage',
+        'webhook_events' => 'billing_webhook_events',
     ],
 ];

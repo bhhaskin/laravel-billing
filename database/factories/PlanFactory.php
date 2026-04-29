@@ -13,7 +13,7 @@ class PlanFactory extends Factory
     public function definition(): array
     {
         $name = $this->faker->words(2, true);
-        $price = $this->faker->randomFloat(2, 5, 500);
+        $price = $this->faker->numberBetween(500, 50000); // cents
 
         return [
             'name' => ucwords($name),

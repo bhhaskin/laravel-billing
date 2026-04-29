@@ -5,11 +5,11 @@ use Bhhaskin\Billing\Models\Plan;
 test('can create a plan', function () {
     $plan = Plan::factory()->create([
         'name' => 'Test Plan',
-        'price' => 9.99,
+        'price' => 999, // $9.99 in cents
     ]);
 
     expect($plan->name)->toBe('Test Plan')
-        ->and($plan->price)->toBe('9.99')
+        ->and($plan->price)->toBe(999)
         ->and($plan->uuid)->not->toBeNull();
 });
 

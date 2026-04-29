@@ -89,7 +89,7 @@ class Plan extends Model
     ];
 
     protected $casts = [
-        'price' => 'decimal:2',
+        'price' => 'integer',
         'requires_plan' => 'boolean',
         'is_active' => 'boolean',
         'trial_period_days' => 'integer',

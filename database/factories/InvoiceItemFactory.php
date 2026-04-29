@@ -14,7 +14,7 @@ class InvoiceItemFactory extends Factory
     public function definition(): array
     {
         $quantity = $this->faker->numberBetween(1, 5);
-        $unitPrice = $this->faker->randomFloat(2, 5, 100);
+        $unitPrice = $this->faker->numberBetween(500, 10000); // cents
         $amount = $quantity * $unitPrice;
 
         return [

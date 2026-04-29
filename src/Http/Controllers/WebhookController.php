@@ -6,8 +6,10 @@ use Bhhaskin\Billing\Events\PaymentFailed;
 use Bhhaskin\Billing\Events\PaymentSucceeded;
 use Bhhaskin\Billing\Models\Invoice;
 use Bhhaskin\Billing\Models\Subscription;
+use Bhhaskin\Billing\Models\WebhookEvent;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Stripe\Exception\SignatureVerificationException;
 use Stripe\Webhook;
@@ -61,37 +63,58 @@ class WebhookController extends Controller
             'event_id' => $event->id,
         ]);
 
+        // Idempotency: dedupe by Stripe event ID. If the event was already processed
+        // successfully, return 200 immediately without re-running handlers. If a row
+        // exists with processed_at = null (a previous attempt failed), allow reprocessing.
+        $webhookEvent = WebhookEvent::firstOrCreate(
+            ['stripe_event_id' => $event->id],
+            ['type' => $event->type, 'received_at' => now()]
+        );
+
+        if ($webhookEvent->processed_at !== null) {
+            Log::info('Stripe webhook duplicate, already processed', [
+                'event_id' => $event->id,
+                'event_type' => $event->type,
+                'originally_processed_at' => $webhookEvent->processed_at->toIso8601String(),
+            ]);
+            return response()->json(['status' => 'duplicate']);
+        }
+
         // Handle the event with try-catch to prevent one failure from breaking webhook processing
         try {
-            switch ($event->type) {
-                case 'invoice.payment_succeeded':
-                    $this->handleInvoicePaymentSucceeded($event->data->object);
-                    break;
+            DB::transaction(function () use ($event) {
+                switch ($event->type) {
+                    case 'invoice.payment_succeeded':
+                        $this->handleInvoicePaymentSucceeded($event->data->object);
+                        break;
 
-                case 'invoice.payment_failed':
-                    $this->handleInvoicePaymentFailed($event->data->object);
-                    break;
+                    case 'invoice.payment_failed':
+                        $this->handleInvoicePaymentFailed($event->data->object);
+                        break;
 
-                case 'customer.subscription.updated':
-                    $this->handleSubscriptionUpdated($event->data->object);
-                    break;
+                    case 'customer.subscription.updated':
+                        $this->handleSubscriptionUpdated($event->data->object);
+                        break;
 
-                case 'customer.subscription.deleted':
-                    $this->handleSubscriptionDeleted($event->data->object);
-                    break;
+                    case 'customer.subscription.deleted':
+                        $this->handleSubscriptionDeleted($event->data->object);
+                        break;
 
-                case 'payment_method.attached':
-                    $this->handlePaymentMethodAttached($event->data->object);
-                    break;
+                    case 'payment_method.attached':
+                        $this->handlePaymentMethodAttached($event->data->object);
+                        break;
 
-                default:
-                    // Log unhandled event types for monitoring
-                    Log::info('Unhandled Stripe webhook event type', [
-                        'event_type' => $event->type,
-                        'event_id' => $event->id,
-                    ]);
-                    break;
-            }
+                    default:
+                        // Log unhandled event types for monitoring
+                        Log::info('Unhandled Stripe webhook event type', [
+                            'event_type' => $event->type,
+                            'event_id' => $event->id,
+                        ]);
+                        break;
+                }
+            });
+
+            $webhookEvent->update(['processed_at' => now()]);
         } catch (\Exception $e) {
             Log::error('Error handling Stripe webhook event', [
                 'event_type' => $event->type,
@@ -99,8 +122,9 @@ class WebhookController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            // Still return 200 to prevent Stripe from retrying
-            // The error is logged for manual investigation
+            // Still return 200 to prevent Stripe from retrying.
+            // The webhook event row remains with processed_at = null so that any future
+            // re-delivery (manual replay or multi-endpoint) will reprocess.
         }
 
         return response()->json(['status' => 'success']);

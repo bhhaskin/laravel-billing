@@ -16,7 +16,8 @@ class DiscountFactory extends Factory
             'name' => $this->faker->words(3, true),
             'description' => $this->faker->sentence,
             'type' => 'percentage',
-            'value' => $this->faker->numberBetween(10, 50),
+            'percentage' => $this->faker->numberBetween(10, 50),
+            'amount_cents' => null,
             'currency' => null,
             'applies_to' => 'all',
             'applicable_plan_ids' => null,
@@ -31,25 +32,31 @@ class DiscountFactory extends Factory
     }
 
     /**
-     * Percentage discount
+     * Percentage discount.
+     *
+     * @param float $value Percentage 0-100.
      */
     public function percentage(float $value = 20): static
     {
         return $this->state(fn (array $attributes) => [
             'type' => 'percentage',
-            'value' => $value,
+            'percentage' => $value,
+            'amount_cents' => null,
             'currency' => null,
         ]);
     }
 
     /**
-     * Fixed amount discount
+     * Fixed amount discount.
+     *
+     * @param int $amountCents Discount amount in cents.
      */
-    public function fixed(float $value = 10, string $currency = 'usd'): static
+    public function fixed(int $amountCents = 1000, string $currency = 'usd'): static
     {
         return $this->state(fn (array $attributes) => [
             'type' => 'fixed',
-            'value' => $value,
+            'percentage' => null,
+            'amount_cents' => $amountCents,
             'currency' => $currency,
         ]);
     }

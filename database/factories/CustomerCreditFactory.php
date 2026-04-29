@@ -12,7 +12,7 @@ class CustomerCreditFactory extends Factory
 
     public function definition(): array
     {
-        $amount = $this->faker->randomFloat(2, 5, 100);
+        $amount = $this->faker->numberBetween(500, 10000); // cents
 
         return [
             'customer_id' => Customer::factory(),

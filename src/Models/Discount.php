@@ -21,7 +21,8 @@ class Discount extends Model
         'name',
         'description',
         'type',
-        'value',
+        'percentage',
+        'amount_cents',
         'currency',
         'applies_to',
         'applicable_plan_ids',
@@ -35,7 +36,8 @@ class Discount extends Model
     ];
 
     protected $casts = [
-        'value' => 'decimal:2',
+        'percentage' => 'decimal:2',
+        'amount_cents' => 'integer',
         'applicable_plan_ids' => 'array',
         'max_redemptions' => 'integer',
         'redemptions_count' => 'integer',
@@ -116,12 +118,15 @@ class Discount extends Model
     }
 
     /**
-     * Calculate the discount amount for a given price
+     * Calculate the discount amount for a given price.
+     *
+     * @param int $amount Amount in cents.
+     * @return int Discount amount in cents.
      */
-    public function calculateDiscount(float $amount, ?string $currency = null): float
+    public function calculateDiscount(int $amount, ?string $currency = null): int
     {
         if ($this->type === 'percentage') {
-            return round($amount * ($this->value / 100), 2);
+            return (int) round($amount * ((float) $this->percentage / 100));
         }
 
         // Fixed discount
@@ -130,13 +135,16 @@ class Discount extends Model
             return 0;
         }
 
-        return min($this->value, $amount); // Don't discount more than the amount
+        return min((int) $this->amount_cents, $amount); // Don't discount more than the amount
     }
 
     /**
-     * Get the discounted price for a given amount
+     * Get the discounted price for a given amount.
+     *
+     * @param int $amount Original amount in cents.
+     * @return int Discounted amount in cents.
      */
-    public function getDiscountedPrice(float $amount, ?string $currency = null): float
+    public function getDiscountedPrice(int $amount, ?string $currency = null): int
     {
         $discount = $this->calculateDiscount($amount, $currency);
 
