@@ -17,13 +17,13 @@ class DiscountTest extends TestCase
             'code' => 'SUMMER2025',
             'name' => 'Summer Sale',
             'type' => 'percentage',
-            'value' => 25,
+            'percentage' => 25,
         ]);
 
         $this->assertDatabaseHas('billing_discounts', [
             'code' => 'SUMMER2025',
             'name' => 'Summer Sale',
-            'value' => 25,
+            'percentage' => 25,
         ]);
     }
 
@@ -58,19 +58,22 @@ class DiscountTest extends TestCase
     {
         $discount = Discount::factory()->percentage(20)->create();
 
-        $discountAmount = $discount->calculateDiscount(100);
+        // 20% of $100 (10000 cents) = $20 (2000 cents)
+        $discountAmount = $discount->calculateDiscount(10000);
 
-        $this->assertEquals(20, $discountAmount);
+        $this->assertEquals(2000, $discountAmount);
     }
 
     /** @test */
     public function it_calculates_fixed_discounts()
     {
-        $discount = Discount::factory()->fixed(15, 'usd')->create();
+        // $15 fixed discount = 1500 cents
+        $discount = Discount::factory()->fixed(1500, 'usd')->create();
 
-        $discountAmount = $discount->calculateDiscount(100, 'usd');
+        // Off a $100 purchase
+        $discountAmount = $discount->calculateDiscount(10000, 'usd');
 
-        $this->assertEquals(15, $discountAmount);
+        $this->assertEquals(1500, $discountAmount);
     }
 
     /** @test */
@@ -161,15 +164,16 @@ class DiscountTest extends TestCase
     public function it_calculates_discount_amount_for_subscription()
     {
         $user = User::factory()->create();
-        $plan = Plan::factory()->create(['price' => 100]);
+        $plan = Plan::factory()->create(['price' => 10000]); // $100 in cents
         $subscription = $user->subscribe($plan);
 
         $discount = Discount::factory()->percentage(20)->create();
         $subscription->applyDiscount($discount);
 
-        $discountAmount = $subscription->calculateDiscountAmount(100);
+        // 20% of $100 (10000 cents) = $20 (2000 cents)
+        $discountAmount = $subscription->calculateDiscountAmount(10000);
 
-        $this->assertEquals(20, $discountAmount);
+        $this->assertEquals(2000, $discountAmount);
     }
 
     /** @test */
@@ -192,7 +196,7 @@ class DiscountTest extends TestCase
     public function it_stacks_multiple_discounts()
     {
         $user = User::factory()->create();
-        $plan = Plan::factory()->create(['price' => 100]);
+        $plan = Plan::factory()->create(['price' => 10000]); // $100 in cents
         $subscription = $user->subscribe($plan);
 
         $discount1 = Discount::factory()->percentage(10)->create();
@@ -201,12 +205,12 @@ class DiscountTest extends TestCase
         $subscription->applyDiscount($discount1);
         $subscription->applyDiscount($discount2);
 
-        // First discount: 100 * 10% = 10
-        // Second discount: (100 - 10) * 5% = 4.5
-        // Total discount: 14.5
-        $totalDiscount = $subscription->calculateDiscountAmount(100);
+        // First discount: 10000 * 10% = 1000
+        // Second discount: (10000 - 1000) * 5% = 450
+        // Total discount: 1450 cents ($14.50)
+        $totalDiscount = $subscription->calculateDiscountAmount(10000);
 
-        $this->assertEquals(14.5, $totalDiscount);
+        $this->assertEquals(1450, $totalDiscount);
     }
 
     /** @test */

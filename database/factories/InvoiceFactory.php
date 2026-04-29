@@ -63,7 +63,10 @@ class InvoiceFactory extends Factory
         ]);
     }
 
-    public function withAmount(float $amount): static
+    /**
+     * @param int $amount Amount in cents.
+     */
+    public function withAmount(int $amount): static
     {
         return $this->state(fn(array $attributes) => [
             'subtotal' => $amount,
@@ -71,7 +74,10 @@ class InvoiceFactory extends Factory
         ]);
     }
 
-    public function withTax(float $tax): static
+    /**
+     * @param int $tax Tax amount in cents.
+     */
+    public function withTax(int $tax): static
     {
         return $this->state(fn(array $attributes) => [
             'tax' => $tax,

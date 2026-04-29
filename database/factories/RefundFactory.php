@@ -16,7 +16,7 @@ class RefundFactory extends Factory
         return [
             'customer_id' => Customer::factory(),
             'invoice_id' => Invoice::factory(),
-            'amount' => $this->faker->randomFloat(2, 10, 1000),
+            'amount' => $this->faker->numberBetween(1000, 100000), // cents
             'currency' => 'usd',
             'status' => Refund::STATUS_PENDING,
             'reason' => Refund::REASON_REQUESTED_BY_CUSTOMER,

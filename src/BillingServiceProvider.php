@@ -2,7 +2,9 @@
 
 namespace Bhhaskin\Billing;
 
+use Bhhaskin\Billing\Console\Commands\CheckExpiringPaymentMethodsCommand;
 use Bhhaskin\Billing\Console\Commands\ProcessBillingCommand;
+use Bhhaskin\Billing\Console\Commands\PruneWebhookEventsCommand;
 use Bhhaskin\Billing\Models\CustomerCredit;
 use Bhhaskin\Billing\Models\Invoice;
 use Bhhaskin\Billing\Models\Refund;
@@ -80,6 +82,8 @@ class BillingServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 ProcessBillingCommand::class,
+                CheckExpiringPaymentMethodsCommand::class,
+                PruneWebhookEventsCommand::class,
             ]);
         }
     }
@@ -143,6 +147,8 @@ class BillingServiceProvider extends ServiceProvider
 
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule) {
             $schedule->command('billing:process')->daily();
+            $schedule->command('billing:check-expiring-payment-methods')->dailyAt('09:00');
+            $schedule->command('billing:prune-webhook-events')->weeklyOn(0, '03:00');
         });
     }
 }

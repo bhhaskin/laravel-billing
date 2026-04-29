@@ -47,7 +47,7 @@ class Customer extends Model
     ];
 
     protected $casts = [
-        'credit_balance' => 'decimal:2',
+        'credit_balance' => 'integer',
         'metadata' => 'array',
     ];
 
@@ -142,18 +142,20 @@ class Customer extends Model
     }
 
     /**
-     * Get available credit balance
+     * Get available credit balance, in cents.
      */
-    public function getAvailableCredit(): float
+    public function getAvailableCredit(): int
     {
-        return (float) $this->credit_balance;
+        return (int) $this->credit_balance;
     }
 
     /**
-     * Add credit to customer balance
+     * Add credit to customer balance.
+     *
+     * @param int $amount Amount in cents (positive for credit, negative for debit).
      */
     public function addCredit(
-        float $amount,
+        int $amount,
         string $type = CustomerCredit::TYPE_MANUAL_ADJUSTMENT,
         ?string $description = null,
         array $options = []
@@ -192,10 +194,12 @@ class Customer extends Model
     }
 
     /**
-     * Deduct credit from customer balance
+     * Deduct credit from customer balance.
+     *
+     * @param int $amount Amount in cents (positive value; will be stored as a negative credit).
      */
     public function deductCredit(
-        float $amount,
+        int $amount,
         string $type = CustomerCredit::TYPE_INVOICE_PAYMENT,
         ?string $description = null,
         array $options = []
@@ -204,9 +208,9 @@ class Customer extends Model
     }
 
     /**
-     * Apply credits to an invoice
+     * Apply credits to an invoice. Returns amount applied, in cents.
      */
-    public function applyCreditsToInvoice(Invoice $invoice): float
+    public function applyCreditsToInvoice(Invoice $invoice): int
     {
         return \Illuminate\Support\Facades\DB::transaction(function () use ($invoice) {
             $availableCredit = $this->getAvailableCredit();
@@ -245,8 +249,11 @@ class Customer extends Model
     /**
      * Create a refund for a customer
      */
+    /**
+     * @param int $amount Refund amount in cents.
+     */
     public function createRefund(
-        float $amount,
+        int $amount,
         ?Invoice $invoice = null,
         string $reason = Refund::REASON_REQUESTED_BY_CUSTOMER,
         ?string $description = null,

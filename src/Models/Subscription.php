@@ -481,24 +481,29 @@ class Subscription extends Model
 
         $currentPlan = $currentPlanItem->plan;
 
-        // Calculate remaining time in current period
+        // Calculate remaining time in current period.
+        // All monetary values below are in cents (integer).
         $now = now();
         $periodStart = $this->current_period_start;
         $periodEnd = $this->current_period_end;
 
-        $totalPeriodSeconds = abs($periodEnd->diffInSeconds($periodStart));
-        $remainingSeconds = abs($periodEnd->diffInSeconds($now));
-        $usedSeconds = abs($now->diffInSeconds($periodStart));
+        if ($periodEnd->lessThanOrEqualTo($periodStart)) {
+            // Invalid or zero-length period; no proration is possible.
+            $totalPeriodSeconds = 0;
+            $remainingSeconds = 0;
+        } else {
+            $totalPeriodSeconds = $periodStart->diffInSeconds($periodEnd);
+            $remainingSeconds = $now->lessThan($periodEnd) ? $now->diffInSeconds($periodEnd) : 0;
+        }
 
         $remainingRatio = $totalPeriodSeconds > 0 ? $remainingSeconds / $totalPeriodSeconds : 0;
-        $usedRatio = $totalPeriodSeconds > 0 ? $usedSeconds / $totalPeriodSeconds : 0;
 
-        // Calculate proration
-        $currentPlanCost = (float) $currentPlan->price;
-        $newPlanCost = (float) $newPlan->price;
+        // Plan prices are integer cents.
+        $currentPlanCost = (int) $currentPlan->price;
+        $newPlanCost = (int) $newPlan->price;
 
-        $unusedCredit = $currentPlanCost * $remainingRatio;
-        $newPlanProrated = $newPlanCost * $remainingRatio;
+        $unusedCredit = (int) round($currentPlanCost * $remainingRatio);
+        $newPlanProrated = (int) round($newPlanCost * $remainingRatio);
 
         $amountDue = $newPlanProrated - $unusedCredit;
 
@@ -507,25 +512,25 @@ class Subscription extends Model
                 'id' => $currentPlan->id,
                 'name' => $currentPlan->name,
                 'price' => $currentPlanCost,
-                'unused_amount' => round($unusedCredit, 2),
+                'unused_amount' => $unusedCredit,
             ],
             'new_plan' => [
                 'id' => $newPlan->id,
                 'name' => $newPlan->name,
                 'price' => $newPlanCost,
-                'prorated_amount' => round($newPlanProrated, 2),
+                'prorated_amount' => $newPlanProrated,
             ],
             'proration' => [
-                'unused_amount' => round($unusedCredit, 2),
-                'charge_for_new' => round($newPlanProrated, 2),
-                'amount_due' => round($amountDue, 2),
+                'unused_amount' => $unusedCredit,
+                'charge_for_new' => $newPlanProrated,
+                'amount_due' => $amountDue,
                 'is_upgrade' => $newPlanCost > $currentPlanCost,
                 'is_downgrade' => $newPlanCost < $currentPlanCost,
             ],
             'period' => [
                 'start' => $periodStart->toIso8601String(),
                 'end' => $periodEnd->toIso8601String(),
-                'remaining_days' => $periodEnd->diffInDays($now),
+                'remaining_days' => (int) $periodEnd->diffInDays($now, false),
             ],
         ];
     }

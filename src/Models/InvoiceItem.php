@@ -52,8 +52,8 @@ class InvoiceItem extends Model
 
     protected $casts = [
         'quantity' => 'integer',
-        'unit_price' => 'decimal:2',
-        'amount' => 'decimal:2',
+        'unit_price' => 'integer',
+        'amount' => 'integer',
         'is_proration' => 'boolean',
         'is_discount' => 'boolean',
         'period_start' => 'datetime',

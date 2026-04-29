@@ -17,21 +17,21 @@ test('invoice calculates totals', function () {
     InvoiceItem::factory()->create([
         'invoice_id' => $invoice->id,
         'quantity' => 2,
-        'unit_price' => 10.00,
-        'amount' => 20.00,
+        'unit_price' => 1000, // $10.00 in cents
+        'amount' => 2000,
     ]);
 
     InvoiceItem::factory()->create([
         'invoice_id' => $invoice->id,
         'quantity' => 1,
-        'unit_price' => 5.00,
-        'amount' => 5.00,
+        'unit_price' => 500, // $5.00 in cents
+        'amount' => 500,
     ]);
 
     $invoice->refresh();
 
-    expect($invoice->subtotal)->toBe('25.00')
-        ->and($invoice->total)->toBe('25.00');
+    expect($invoice->subtotal)->toBe(2500)
+        ->and($invoice->total)->toBe(2500);
 });
 
 test('can mark invoice as paid', function () {

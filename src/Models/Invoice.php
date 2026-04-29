@@ -70,10 +70,10 @@ class Invoice extends Model
     ];
 
     protected $casts = [
-        'subtotal' => 'decimal:2',
-        'discount' => 'decimal:2',
-        'tax' => 'decimal:2',
-        'total' => 'decimal:2',
+        'subtotal' => 'integer',
+        'discount' => 'integer',
+        'tax' => 'integer',
+        'total' => 'integer',
         'due_date' => 'datetime',
         'paid_at' => 'datetime',
         'voided_at' => 'datetime',
@@ -291,8 +291,13 @@ class Invoice extends Model
     /**
      * Create a refund for this invoice
      */
+    /**
+     * Issue a refund for this invoice.
+     *
+     * @param int|null $amount Refund amount in cents. Defaults to full remaining refundable.
+     */
     public function refund(
-        ?float $amount = null,
+        ?int $amount = null,
         string $reason = Refund::REASON_REQUESTED_BY_CUSTOMER,
         ?string $description = null
     ): Refund {
@@ -300,7 +305,7 @@ class Invoice extends Model
         $refundAmount = $amount ?? $this->total;
 
         // Check if refund amount is valid
-        $totalRefunded = $this->refunds()->succeeded()->sum('amount');
+        $totalRefunded = (int) $this->refunds()->succeeded()->sum('amount');
         $remainingRefundable = $this->total - $totalRefunded;
 
         if ($refundAmount > $remainingRefundable) {
@@ -320,15 +325,21 @@ class Invoice extends Model
     /**
      * Get total amount refunded for this invoice
      */
-    public function getTotalRefunded(): float
+    /**
+     * Total amount refunded across all succeeded refunds, in cents.
+     */
+    public function getTotalRefunded(): int
     {
-        return (float) $this->refunds()->succeeded()->sum('amount');
+        return (int) $this->refunds()->succeeded()->sum('amount');
     }
 
     /**
      * Get remaining refundable amount
      */
-    public function getRemainingRefundable(): float
+    /**
+     * Remaining refundable amount, in cents.
+     */
+    public function getRemainingRefundable(): int
     {
         return max(0, $this->total - $this->getTotalRefunded());
     }
