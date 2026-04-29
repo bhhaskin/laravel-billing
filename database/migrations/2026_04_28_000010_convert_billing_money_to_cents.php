@@ -14,6 +14,10 @@ use Illuminate\Support\Facades\Schema;
  *
  * For Discount, the dual-purpose `value` column is split into `percentage`
  * (decimal 5,2 nullable, range 0-100) and `amount_cents` (bigInteger nullable).
+ *
+ * Idempotency: the migration is safe to re-run if a previous attempt failed
+ * partway. Each step checks current schema state and skips work that has
+ * already happened.
  */
 return new class extends Migration
 {
@@ -88,35 +92,75 @@ return new class extends Migration
     }
 
     /**
+     * SQL CAST target that produces an integer on the current driver.
+     * MySQL uses SIGNED; SQLite/PostgreSQL accept INTEGER.
+     */
+    protected function intCastType(): string
+    {
+        $driver = Schema::getConnection()->getDriverName();
+        return $driver === 'mysql' || $driver === 'mariadb' ? 'SIGNED' : 'INTEGER';
+    }
+
+    /**
      * Convert decimal columns to bigInteger cents.
      *
      * Uses an add/copy/drop/rename strategy so it works across MySQL, PostgreSQL,
-     * and SQLite without depending on doctrine/dbal.
+     * and SQLite without depending on doctrine/dbal. Each step is idempotent so
+     * the migration can be re-run after a partial failure.
      */
     protected function convertColumns(string $table, array $columns): void
     {
-        Schema::table($table, function (Blueprint $blueprint) use ($columns) {
-            foreach ($columns as $col => $opts) {
-                $column = $blueprint->bigInteger("{$col}_cents")->nullable();
-                if (array_key_exists('default', $opts)) {
-                    $column->default($opts['default']);
-                }
-            }
-        });
-
-        foreach (array_keys($columns) as $col) {
-            DB::statement("UPDATE {$table} SET {$col}_cents = CAST(ROUND({$col} * 100) AS INTEGER)");
+        if (! Schema::hasTable($table)) {
+            return;
         }
 
-        Schema::table($table, function (Blueprint $blueprint) use ($columns) {
-            $blueprint->dropColumn(array_keys($columns));
-        });
+        $intCast = $this->intCastType();
 
-        Schema::table($table, function (Blueprint $blueprint) use ($columns) {
-            foreach (array_keys($columns) as $col) {
-                $blueprint->renameColumn("{$col}_cents", $col);
+        // 1. Add `<col>_cents` columns (skip any that already exist from a partial run).
+        $needsAdd = array_filter(
+            array_keys($columns),
+            fn ($col) => ! Schema::hasColumn($table, "{$col}_cents")
+        );
+
+        if (! empty($needsAdd)) {
+            Schema::table($table, function (Blueprint $blueprint) use ($needsAdd, $columns) {
+                foreach ($needsAdd as $col) {
+                    $opts = $columns[$col];
+                    $column = $blueprint->bigInteger("{$col}_cents")->nullable();
+                    if (array_key_exists('default', $opts)) {
+                        $column->default($opts['default']);
+                    }
+                }
+            });
+        }
+
+        // 2. Copy data: only run for columns where the original (decimal) still exists.
+        foreach (array_keys($columns) as $col) {
+            if (Schema::hasColumn($table, $col)) {
+                DB::statement("UPDATE {$table} SET {$col}_cents = CAST(ROUND({$col} * 100) AS {$intCast})");
             }
-        });
+        }
+
+        // 3. Drop original decimal columns that still exist.
+        $toDrop = array_filter(
+            array_keys($columns),
+            fn ($col) => Schema::hasColumn($table, $col)
+        );
+
+        if (! empty($toDrop)) {
+            Schema::table($table, function (Blueprint $blueprint) use ($toDrop) {
+                $blueprint->dropColumn($toDrop);
+            });
+        }
+
+        // 4. Rename `<col>_cents` → `<col>` for any that haven't been renamed yet.
+        foreach (array_keys($columns) as $col) {
+            if (! Schema::hasColumn($table, $col) && Schema::hasColumn($table, "{$col}_cents")) {
+                Schema::table($table, function (Blueprint $blueprint) use ($col) {
+                    $blueprint->renameColumn("{$col}_cents", $col);
+                });
+            }
+        }
     }
 
     /**
@@ -124,60 +168,116 @@ return new class extends Migration
      */
     protected function revertColumns(string $table, array $columns): void
     {
-        Schema::table($table, function (Blueprint $blueprint) use ($columns) {
-            foreach ($columns as $col => $opts) {
-                $column = $blueprint->decimal("{$col}_decimal", 10, 2)->nullable();
-                if (array_key_exists('default', $opts)) {
-                    $column->default($opts['default']);
-                }
-            }
-        });
-
-        foreach (array_keys($columns) as $col) {
-            DB::statement("UPDATE {$table} SET {$col}_decimal = {$col} / 100.0");
+        if (! Schema::hasTable($table)) {
+            return;
         }
 
-        Schema::table($table, function (Blueprint $blueprint) use ($columns) {
-            $blueprint->dropColumn(array_keys($columns));
-        });
+        $needsAdd = array_filter(
+            array_keys($columns),
+            fn ($col) => ! Schema::hasColumn($table, "{$col}_decimal")
+        );
 
-        Schema::table($table, function (Blueprint $blueprint) use ($columns) {
-            foreach (array_keys($columns) as $col) {
-                $blueprint->renameColumn("{$col}_decimal", $col);
+        if (! empty($needsAdd)) {
+            Schema::table($table, function (Blueprint $blueprint) use ($needsAdd, $columns) {
+                foreach ($needsAdd as $col) {
+                    $opts = $columns[$col];
+                    $column = $blueprint->decimal("{$col}_decimal", 10, 2)->nullable();
+                    if (array_key_exists('default', $opts)) {
+                        $column->default($opts['default']);
+                    }
+                }
+            });
+        }
+
+        foreach (array_keys($columns) as $col) {
+            if (Schema::hasColumn($table, $col)) {
+                DB::statement("UPDATE {$table} SET {$col}_decimal = {$col} / 100.0");
             }
-        });
+        }
+
+        $toDrop = array_filter(
+            array_keys($columns),
+            fn ($col) => Schema::hasColumn($table, $col)
+        );
+
+        if (! empty($toDrop)) {
+            Schema::table($table, function (Blueprint $blueprint) use ($toDrop) {
+                $blueprint->dropColumn($toDrop);
+            });
+        }
+
+        foreach (array_keys($columns) as $col) {
+            if (! Schema::hasColumn($table, $col) && Schema::hasColumn($table, "{$col}_decimal")) {
+                Schema::table($table, function (Blueprint $blueprint) use ($col) {
+                    $blueprint->renameColumn("{$col}_decimal", $col);
+                });
+            }
+        }
     }
 
     protected function splitDiscountValue(): void
     {
         $table = 'billing_discounts';
 
-        Schema::table($table, function (Blueprint $blueprint) {
-            $blueprint->decimal('percentage', 5, 2)->nullable()->after('type');
-            $blueprint->bigInteger('amount_cents')->nullable()->after('percentage');
-        });
+        if (! Schema::hasTable($table)) {
+            return;
+        }
 
-        DB::statement("UPDATE {$table} SET percentage = value WHERE type = 'percentage'");
-        DB::statement("UPDATE {$table} SET amount_cents = CAST(ROUND(value * 100) AS INTEGER) WHERE type = 'fixed'");
+        $intCast = $this->intCastType();
 
-        Schema::table($table, function (Blueprint $blueprint) {
-            $blueprint->dropColumn('value');
-        });
+        if (! Schema::hasColumn($table, 'percentage')) {
+            Schema::table($table, function (Blueprint $blueprint) {
+                $blueprint->decimal('percentage', 5, 2)->nullable()->after('type');
+            });
+        }
+
+        if (! Schema::hasColumn($table, 'amount_cents')) {
+            Schema::table($table, function (Blueprint $blueprint) {
+                $blueprint->bigInteger('amount_cents')->nullable()->after('percentage');
+            });
+        }
+
+        if (Schema::hasColumn($table, 'value')) {
+            DB::statement("UPDATE {$table} SET percentage = value WHERE type = 'percentage'");
+            DB::statement("UPDATE {$table} SET amount_cents = CAST(ROUND(value * 100) AS {$intCast}) WHERE type = 'fixed'");
+
+            Schema::table($table, function (Blueprint $blueprint) {
+                $blueprint->dropColumn('value');
+            });
+        }
     }
 
     protected function mergeDiscountValue(): void
     {
         $table = 'billing_discounts';
 
-        Schema::table($table, function (Blueprint $blueprint) {
-            $blueprint->decimal('value', 10, 2)->nullable()->after('type');
-        });
+        if (! Schema::hasTable($table)) {
+            return;
+        }
 
-        DB::statement("UPDATE {$table} SET value = percentage WHERE type = 'percentage'");
-        DB::statement("UPDATE {$table} SET value = amount_cents / 100.0 WHERE type = 'fixed'");
+        if (! Schema::hasColumn($table, 'value')) {
+            Schema::table($table, function (Blueprint $blueprint) {
+                $blueprint->decimal('value', 10, 2)->nullable()->after('type');
+            });
+        }
 
-        Schema::table($table, function (Blueprint $blueprint) {
-            $blueprint->dropColumn(['percentage', 'amount_cents']);
-        });
+        if (Schema::hasColumn($table, 'percentage')) {
+            DB::statement("UPDATE {$table} SET value = percentage WHERE type = 'percentage'");
+        }
+
+        if (Schema::hasColumn($table, 'amount_cents')) {
+            DB::statement("UPDATE {$table} SET value = amount_cents / 100.0 WHERE type = 'fixed'");
+        }
+
+        $toDrop = array_filter(
+            ['percentage', 'amount_cents'],
+            fn ($col) => Schema::hasColumn($table, $col)
+        );
+
+        if (! empty($toDrop)) {
+            Schema::table($table, function (Blueprint $blueprint) use ($toDrop) {
+                $blueprint->dropColumn($toDrop);
+            });
+        }
     }
 };

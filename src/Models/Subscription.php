@@ -57,6 +57,7 @@ class Subscription extends Model
         'plan_change_scheduled_for',
         'failed_payment_count',
         'last_failed_payment_at',
+        'payment_failed_at',
         'metadata',
     ];
 
@@ -81,6 +82,7 @@ class Subscription extends Model
         'plan_changed_at' => 'datetime',
         'plan_change_scheduled_for' => 'datetime',
         'last_failed_payment_at' => 'datetime',
+        'payment_failed_at' => 'datetime',
         'failed_payment_count' => 'integer',
         'metadata' => 'array',
     ];
