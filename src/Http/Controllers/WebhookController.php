@@ -57,74 +57,88 @@ class WebhookController extends Controller
             return response()->json(['error' => 'Webhook processing failed'], 400);
         }
 
-        // Log received webhook for debugging
         Log::info('Stripe webhook received', [
             'event_type' => $event->type,
             'event_id' => $event->id,
         ]);
 
-        // Idempotency: dedupe by Stripe event ID. If the event was already processed
-        // successfully, return 200 immediately without re-running handlers. If a row
-        // exists with processed_at = null (a previous attempt failed), allow reprocessing.
+        // Race-safe insert: unique index on stripe_event_id serializes concurrent
+        // INSERTs of the same event. The follow-up transaction with lockForUpdate is
+        // what prevents two concurrent retries from both running handlers.
         $webhookEvent = WebhookEvent::firstOrCreate(
             ['stripe_event_id' => $event->id],
             ['type' => $event->type, 'received_at' => now()]
         );
 
-        if ($webhookEvent->processed_at !== null) {
-            Log::info('Stripe webhook duplicate, already processed', [
-                'event_id' => $event->id,
-                'event_type' => $event->type,
-                'originally_processed_at' => $webhookEvent->processed_at->toIso8601String(),
-            ]);
-            return response()->json(['status' => 'duplicate']);
-        }
-
-        // Handle the event with try-catch to prevent one failure from breaking webhook processing
         try {
-            DB::transaction(function () use ($event) {
+            $processed = DB::transaction(function () use ($event, $webhookEvent) {
+                // Hold a row lock for the entire handler run so concurrent retries
+                // block here and re-check processed_at after we commit.
+                $locked = WebhookEvent::where('id', $webhookEvent->id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($locked->processed_at !== null) {
+                    return false;
+                }
+
                 switch ($event->type) {
                     case 'invoice.payment_succeeded':
                         $this->handleInvoicePaymentSucceeded($event->data->object);
                         break;
-
                     case 'invoice.payment_failed':
                         $this->handleInvoicePaymentFailed($event->data->object);
                         break;
-
                     case 'customer.subscription.updated':
                         $this->handleSubscriptionUpdated($event->data->object);
                         break;
-
                     case 'customer.subscription.deleted':
                         $this->handleSubscriptionDeleted($event->data->object);
                         break;
-
                     case 'payment_method.attached':
                         $this->handlePaymentMethodAttached($event->data->object);
                         break;
-
+                    case 'charge.dispute.created':
+                        $this->handleChargeDisputeCreated($event->data->object);
+                        break;
+                    case 'customer.deleted':
+                        $this->handleCustomerDeleted($event->data->object);
+                        break;
+                    case 'customer.subscription.trial_will_end':
+                        $this->handleSubscriptionTrialWillEnd($event->data->object);
+                        break;
                     default:
-                        // Log unhandled event types for monitoring
                         Log::info('Unhandled Stripe webhook event type', [
                             'event_type' => $event->type,
                             'event_id' => $event->id,
                         ]);
                         break;
                 }
-            });
 
-            $webhookEvent->update(['processed_at' => now()]);
-        } catch (\Exception $e) {
+                // Stamp processed_at inside the same transaction so the lock guarantees
+                // no other request can see processed_at=null after we run handlers.
+                $locked->update(['processed_at' => now()]);
+
+                return true;
+            });
+        } catch (\Throwable $e) {
             Log::error('Error handling Stripe webhook event', [
                 'event_type' => $event->type,
                 'event_id' => $event->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            // Still return 200 to prevent Stripe from retrying.
-            // The webhook event row remains with processed_at = null so that any future
-            // re-delivery (manual replay or multi-endpoint) will reprocess.
+            // Return 500 so Stripe retries. The transaction rolled back, so
+            // processed_at is still null and the retry will reprocess cleanly.
+            return response()->json(['error' => 'Webhook handler failed'], 500);
+        }
+
+        if ($processed === false) {
+            Log::info('Stripe webhook duplicate, already processed', [
+                'event_id' => $event->id,
+                'event_type' => $event->type,
+            ]);
+            return response()->json(['status' => 'duplicate']);
         }
 
         return response()->json(['status' => 'success']);
@@ -207,5 +221,35 @@ class WebhookController extends Controller
     {
         // This can be used to sync payment methods to the database
         // Implementation depends on requirements
+    }
+
+    /**
+     * Handle a Stripe chargeback being opened. Override in app for business action.
+     */
+    protected function handleChargeDisputeCreated($stripeDispute): void
+    {
+        Log::warning('Stripe chargeback opened (no app handler overrides default)', [
+            'dispute_id' => $stripeDispute->id ?? null,
+        ]);
+    }
+
+    /**
+     * Handle Stripe-side customer deletion. Override in app to reconcile.
+     */
+    protected function handleCustomerDeleted($stripeCustomer): void
+    {
+        Log::warning('Stripe customer deleted (no app handler overrides default)', [
+            'stripe_customer_id' => $stripeCustomer->id ?? null,
+        ]);
+    }
+
+    /**
+     * Handle a trial ending soon. Override in app to notify the customer.
+     */
+    protected function handleSubscriptionTrialWillEnd($stripeSubscription): void
+    {
+        Log::info('Stripe trial ending soon (no app handler overrides default)', [
+            'stripe_subscription_id' => $stripeSubscription->id ?? null,
+        ]);
     }
 }
